@@ -42,6 +42,7 @@ class Logger:
         log_file_name = f"{self.log_file_name}_{current_date}.log"
         # Define the full log file path
         logging_file = os.path.join(self.log_path, log_file_name)
+        os.makedirs(self.log_path, exist_ok=True)
         
         # Check if the log file exists; if not, create it
         if not os.path.exists(logging_file):

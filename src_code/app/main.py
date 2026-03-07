@@ -85,33 +85,39 @@ app.add_middleware(
 class CustomHeaderMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Scope, call_next):
         response = await call_next(request)
+
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=(), interest-cohort=()"
+        response.headers["Permissions-Policy"] = (
+            "geolocation=(), camera=(), microphone=(), interest-cohort=()"
+        )
 
         path = request["path"]
-        
-        if path.startswith("/docs") or path.startswith("/openapi.json"):
-            response.headers["Content-Security-Policy"] = (
-                "default-src 'self' https://cdn.jsdelivr.net; "
-                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-                "img-src 'self' data: https://fastapi.tiangolo.com; "
-                "object-src 'none';"
-            )
-        else:
-            response.headers["Content-Security-Policy"] = (
-                "default-src 'none'; "
-                "frame-ancestors 'none'; "
-                "base-uri 'none'; "
-                "form-action 'none'; "
-                "img-src 'self'; "
-                 f"connect-src 'self' {ALLOWED_CSP_ORIGINS}; "
-            )
-        return response
 
+        if path.startswith("/docs") or path.startswith("/openapi.json"):
+            csp = [
+                "default-src 'self' https://cdn.jsdelivr.net",
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+                "img-src 'self' data: https://fastapi.tiangolo.com",
+                "object-src 'none'",
+            ]
+        else:
+            csp = [
+                "default-src 'none'",
+                "frame-ancestors 'none'",
+                "base-uri 'none'",
+                "form-action 'none'",
+                "img-src 'self'",
+                f"connect-src 'self' {ALLOWED_CSP_ORIGINS}".strip(),
+            ]
+
+        response.headers["Content-Security-Policy"] = "; ".join(csp)
+
+        return response
+    
 # Assign UUID per request middleware
 @app.middleware("http")
 async def assign_new_uuid_per_request(request: Request, call_next):

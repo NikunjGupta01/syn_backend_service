@@ -1,0 +1,54 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile_local
+    container_name: synquerra_backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./src_code:/opt # 👈 THIS IS THE KEY
+    depends_on:
+      - mongo
+      - redis
+      - rabbitmq
+      - mqtt
+    restart: always
+
+  mongo:
+    image: mongo:7
+    container_name: synquerra_mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: always
+
+  redis:
+    image: redis:7
+    container_name: synquerra_redis
+    ports:
+      - "6379:6379"
+    restart: always
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: synquerra_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    restart: always
+
+  mqtt:
+    image: eclipse-mosquitto
+    container_name: synquerra_mqtt
+    ports:
+      - "1883:1883"
+    restart: always
+
+volumes:
+  mongo_data:

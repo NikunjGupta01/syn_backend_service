@@ -1,4 +1,5 @@
 import time
+import redis.exceptions
 from fastapi import Request
 from redis import asyncio as aioredis
 from app.config.config import settings
@@ -53,10 +54,7 @@ async def redis_rate_limiter(request: Request, call_next):
         return await call_next(request)
 
     if redis_client is None:
-        return JSONResponse(
-            content=APIResponse.error("Service unavailable: Redis not initialized", ErrorCodes.SERVICE_UNAVAILABLE),
-            status_code=ErrorCodes.SERVICE_UNAVAILABLE
-        )
+        return await call_next(request)
 
     api_key = get_api_key(request)
 
@@ -75,40 +73,43 @@ async def redis_rate_limiter(request: Request, call_next):
     redis_key = get_rate_key(api_key, request.url.path)
 
     # Add current request timestamp
-    await redis_client.zadd(redis_key, {str(now): now})
+    try:
+        await redis_client.zadd(redis_key, {str(now): now})
 
-    # Remove requests outside the window
-    await redis_client.zremrangebyscore(redis_key, 0, cutoff)
+        # Remove requests outside the window
+        await redis_client.zremrangebyscore(redis_key, 0, cutoff)
 
-    # Count requests in current window
-    current_count = await redis_client.zcard(redis_key)
+        # Count requests in current window
+        current_count = await redis_client.zcard(redis_key)
 
-    # Log for debugging
-    print(f"API Key: {api_key}, Path: {request.url.path}, "f"Requests in window: {current_count}, Limit: {limit}, Window: {window}s")
+        # Log for debugging
+        print(f"API Key: {api_key}, Path: {request.url.path}, "f"Requests in window: {current_count}, Limit: {limit}, Window: {window}s")
 
-    # Ensure key expires automatically
-    await redis_client.expire(redis_key, window)
+        # Ensure key expires automatically
+        await redis_client.expire(redis_key, window)
 
-    if current_count > limit:
-        retry_after = await redis_client.pttl(redis_key) // 1000
-        return JSONResponse(
-            content=APIResponse.error(
-                f"{ErrorMessages.TOO_MANY_REQUESTS} — Limit {limit} per {window}s, retry after {retry_after}s",
-                ErrorCodes.TOO_MANY_REQUESTS
-            ),
-            status_code=ErrorCodes.TOO_MANY_REQUESTS,
-            headers={
-                "Retry-After": str(retry_after),
-                "X-RateLimit-Limit": str(limit),
-                "X-RateLimit-Remaining": "0",
-                "X-RateLimit-Reset": str(int(time.time()) + retry_after),
-            },
-        )
+        if current_count > limit:
+            retry_after = await redis_client.pttl(redis_key) // 1000
+            return JSONResponse(
+                content=APIResponse.error(
+                    f"{ErrorMessages.TOO_MANY_REQUESTS} — Limit {limit} per {window}s, retry after {retry_after}s",
+                    ErrorCodes.TOO_MANY_REQUESTS
+                ),
+                status_code=ErrorCodes.TOO_MANY_REQUESTS,
+                headers={
+                    "Retry-After": str(retry_after),
+                    "X-RateLimit-Limit": str(limit),
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str(int(time.time()) + retry_after),
+                },
+            )
 
-    # Pass through request and add rate limit headers
-    response = await call_next(request)
-    ttl = await redis_client.pttl(redis_key) // 1000
-    response.headers["X-RateLimit-Limit"] = str(limit)
-    response.headers["X-RateLimit-Remaining"] = str(max(limit - current_count, 0))
-    response.headers["X-RateLimit-Reset"] = str(int(time.time()) + ttl)
-    return response
+        # Pass through request and add rate limit headers
+        response = await call_next(request)
+        ttl = await redis_client.pttl(redis_key) // 1000
+        response.headers["X-RateLimit-Limit"] = str(limit)
+        response.headers["X-RateLimit-Remaining"] = str(max(limit - current_count, 0))
+        response.headers["X-RateLimit-Reset"] = str(int(time.time()) + ttl)
+        return response
+    except (redis.exceptions.RedisError, OSError, ConnectionError):
+        return await call_next(request)

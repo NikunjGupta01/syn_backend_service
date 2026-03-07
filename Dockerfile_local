@@ -1,40 +1,23 @@
-# Use an official Python runtime as a parent image
-FROM python:3.12-slim-bullseye
+FROM python:3.11-slim
 
-LABEL maintainer="Satish Kumar Sinha"
-LABEL version="1.0"
-ENV TZ="Asia/Kolkata"
+WORKDIR /opt
 
-# Set environment variables
-#ENV PYTHONDONTWRITEBYTECODE 1
-#ENV PYTHONUNBUFFERED 1
+# Install system deps
+RUN apt-get update && apt-get install -y \
+    gcc \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory inside the container
-WORKDIR /opt/
+# Copy requirements first (better cache)
+COPY src_code/requirements.txt .
 
-# Copy the requirements file and install Python dependencies
-# COPY requirements.txt .
+RUN pip install --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y gcc libpq-dev vim && pip install --upgrade pip && apt-get remove -y gcc libpq-dev && apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Copy project
+# COPY src_code/. .
+# COPY .env .env
 
+EXPOSE 8000
 
-RUN mkdir logs
-
-# Set environment variables for Python
-ENV PYTHONDONTWRITEBYTECODE 1  # Prevent Python from writing .pyc files to disk
-ENV PYTHONUNBUFFERED 1  # Force Python to output to stdout and stderr without buffering
-
-# Copy the rest of the application code and config file into the container
-COPY src_code/. /opt/
-COPY .env /opt/.env
-
-# Install Python dependencies and clean up
-RUN pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir python-multipart fastapi-cli
-
-
-# Expose the port FastAPI will run on
-EXPOSE 80
-
-# Command to run the FastAPI app using Uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80", "--timeout-keep-alive", "10000", "--header", "server:openforge", "--reload"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
