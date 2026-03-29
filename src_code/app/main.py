@@ -1,6 +1,7 @@
 # System imports
 import uvicorn
 import asyncio
+from urllib.parse import urlparse
 import redis.asyncio as redis
 from starlette.types import Scope
 from fastapi import FastAPI, Request
@@ -21,7 +22,25 @@ from app.services.SosWatcherService import watch_sos_events
 from fastapi.responses import JSONResponse, RedirectResponse
 from app.middleware.redis_rate_limiter import init_redis, redis_rate_limiter
 
-ALLOWED_CSP_ORIGINS = " ".join(settings.FRONTEND_ORIGINS.split(","))
+def build_allowed_csp_origins(frontend_origins: str) -> str:
+    valid_origins: list[str] = []
+
+    for origin in frontend_origins.split(","):
+        normalized_origin = origin.strip().strip("'\"")
+        if not normalized_origin:
+            continue
+
+        if "://" not in normalized_origin:
+            normalized_origin = f"http://{normalized_origin}"
+
+        parsed_origin = urlparse(normalized_origin)
+        if parsed_origin.scheme in {"http", "https", "ws", "wss"} and parsed_origin.netloc:
+            valid_origins.append(normalized_origin)
+
+    return " ".join(dict.fromkeys(valid_origins))
+
+
+ALLOWED_CSP_ORIGINS = build_allowed_csp_origins(settings.FRONTEND_ORIGINS)
 
 
 # Lifespan hook for startup tasks
@@ -80,7 +99,7 @@ for r in router_registry:
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.FRONTEND_ORIGINS.split(","),
+    allow_origins="*",
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -117,7 +136,7 @@ class CustomHeaderMiddleware(BaseHTTPMiddleware):
                 "base-uri 'none'; "
                 "form-action 'none'; "
                 "img-src 'self'; "
-                 f"connect-src 'self' {ALLOWED_CSP_ORIGINS}; "
+                f"connect-src 'self' {ALLOWED_CSP_ORIGINS}; "
             )
         return response
 
@@ -128,7 +147,7 @@ async def assign_new_uuid_per_request(request: Request, call_next):
     return await call_next(request)
 
 # Apply security headers middleware
-app.add_middleware(CustomHeaderMiddleware)
+# app.add_middleware(CustomHeaderMiddleware)
 
 # Initialize HTTP client
 client = None
