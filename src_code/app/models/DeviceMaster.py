@@ -24,5 +24,7 @@ class DeviceMaster(Model):
     student_id: Optional[str] = None
     is_active: bool = True
     is_subscribed: bool = False
+    current_mode: Optional[str] = "Normal"
+    led_status: Optional[str] = "off"
 
     model_config = {"collection": "devices_master"}

@@ -55,6 +55,8 @@ def serialize_device(record):
         "longitude": data.get("longitude"),
         "speed": data.get("speed"),
         "temperature": data.get("temperature"),
+        "current_mode": data.get("current_mode"),
+        "led_status": data.get("led_status"),
         "timestamp": data.get("timestamp"),
         "battery": data.get("Battery"),
         "signal": data.get("Signal"),

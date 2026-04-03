@@ -31,6 +31,15 @@ class DeviceSettingUpdateRequest(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class AirplaneModeRequest(BaseModel):
+    topic: str
+    AirplaneMode: str  # expect "enable" or "disable"
+
+class LedStatusRequest(BaseModel):
+    topic: str
+    LED: str  # expect "SwitchOnLed" or "SwitchoffLed"
+
+
 client = mqtt_connector.client
 
 
@@ -62,6 +71,32 @@ def update_device_settings_command(imei: str, settings: dict):
         return False, f"MQTT publish failed rc={result.rc}"
 
     return True, "Device settings update published"
+
+
+def send_airplane_mode_command(imei: str, mode: str):
+    if not client.is_connected():
+        return False, "MQTT client not connected"
+
+    command_topic = f"{imei}/sub"
+    payload = json.dumps({AIRPLANE_MODE_COMMAND: mode})
+    result = client.publish(command_topic, payload)
+    if result.rc != 0:
+        return False, f"MQTT publish failed rc={result.rc}"
+
+    return True, "Airplane mode command published"
+
+
+def send_led_command(imei: str, led_command: str):
+    if not client.is_connected():
+        return False, "MQTT client not connected"
+
+    command_topic = f"{imei}/sub"
+    payload = json.dumps({"LED": led_command})
+    result = client.publish(command_topic, payload)
+    if result.rc != 0:
+        return False, f"MQTT publish failed rc={result.rc}"
+
+    return True, "LED command published"
 
 
 def serialize_device_setting(record: DeviceSetting):
@@ -102,6 +137,8 @@ COMMAND_TO_ATTR = {
     "LowbatLimit": "lowbat_limit",
     "TemperatureLimit": "temperature_limit",
 }
+
+AIRPLANE_MODE_COMMAND = "AirplaneMode"
 
 
 class DeviceSettingsController:
@@ -268,6 +305,98 @@ class DeviceSettingsController:
                     code=ErrorCodes.ACCEPTED,
                 ),
                 status_code=ErrorCodes.ACCEPTED,
+            )
+
+        except Exception as e:
+            return JSONResponse(
+                APIResponse.error(
+                    msg=f"Unexpected error: {str(e)}",
+                    code=ErrorCodes.INTERNAL_SERVER_ERROR,
+                ),
+                status_code=ErrorCodes.INTERNAL_SERVER_ERROR,
+            )
+
+    async def set_airplane_mode(self, payload: AirplaneModeRequest):
+        try:
+            db = get_db()
+
+            device = await db.find_one(DeviceMaster, {"topic": payload.topic})
+            if not device:
+                return JSONResponse(
+                    APIResponse.error(
+                        msg="Device not found",
+                        code=ErrorCodes.NOT_FOUND,
+                    ),
+                    status_code=ErrorCodes.NOT_FOUND,
+                )
+
+            ok, publish_message = send_airplane_mode_command(
+                device.imei, payload.AirplaneMode
+            )
+            if not ok:
+                return JSONResponse(
+                    APIResponse.error(
+                        msg=f"Airplane mode command failed: {publish_message}",
+                        code=ErrorCodes.INTERNAL_SERVER_ERROR,
+                    ),
+                    status_code=ErrorCodes.INTERNAL_SERVER_ERROR,
+                )
+
+            # store requested mode as current_mode
+            device.current_mode = payload.AirplaneMode
+            await db.save(device)
+
+            return JSONResponse(
+                APIResponse.success(
+                    msg="Airplane mode command sent",
+                    data={"topic": payload.topic, "mode": payload.AirplaneMode},
+                ),
+                status_code=ErrorCodes.SUCCESS,
+            )
+
+        except Exception as e:
+            return JSONResponse(
+                APIResponse.error(
+                    msg=f"Unexpected error: {str(e)}",
+                    code=ErrorCodes.INTERNAL_SERVER_ERROR,
+                ),
+                status_code=ErrorCodes.INTERNAL_SERVER_ERROR,
+            )
+
+    async def set_led_status(self, payload: LedStatusRequest):
+        try:
+            db = get_db()
+
+            device = await db.find_one(DeviceMaster, {"topic": payload.topic})
+            if not device:
+                return JSONResponse(
+                    APIResponse.error(
+                        msg="Device not found",
+                        code=ErrorCodes.NOT_FOUND,
+                    ),
+                    status_code=ErrorCodes.NOT_FOUND,
+                )
+
+            ok, publish_message = send_led_command(device.imei, payload.LED)
+            if not ok:
+                return JSONResponse(
+                    APIResponse.error(
+                        msg=f"LED command failed: {publish_message}",
+                        code=ErrorCodes.INTERNAL_SERVER_ERROR,
+                    ),
+                    status_code=ErrorCodes.INTERNAL_SERVER_ERROR,
+                )
+
+            # optimistic update
+            device.led_status = payload.LED
+            await db.save(device)
+
+            return JSONResponse(
+                APIResponse.success(
+                    msg="LED command sent",
+                    data={"topic": payload.topic, "LED": payload.LED},
+                ),
+                status_code=ErrorCodes.SUCCESS,
             )
 
         except Exception as e:
