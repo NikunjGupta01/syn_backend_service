@@ -18,12 +18,32 @@ def convert_device(record: dict):
     else:
         created_stripped = None
 
+    updated = record.get("updatedAt")
+    if isinstance(updated, datetime):
+        updated_stripped = updated.strftime("%Y-%m-%d %H:%M:%S")
+    elif isinstance(updated, str):
+        updated_stripped = updated.split(".")[0]
+    else:
+        updated_stripped = None
+
     return {
         "topic": record.get("topic"),
         "imei": record.get("imei"),
         "interval": record.get("interval"),
         "geoid": record.get("geoid"),
+        "packet": record.get("packet"),
+        "latitude": record.get("latitude"),
+        "longitude": record.get("longitude"),
+        "speed": record.get("speed"),
+        "temperature": record.get("temperature"),
+        "timestamp": record.get("timestamp"),
+        "battery": record.get("battery"),
+        "signal": record.get("signal"),
+        "gpsStrength": record.get("gps_strength"),
+        "isActive": record.get("is_active"),
+        "isSubscribed": record.get("is_subscribed"),
         "createdAt": created_stripped,
+        "updatedAt": updated_stripped,
         "studentName": record.get("student_name"),
         "studentId": record.get("student_id"),
     }
@@ -35,7 +55,19 @@ class DeviceType:
     imei: str | None
     interval: int | None
     geoid: str | None
+    packet: str | None
+    latitude: str | None
+    longitude: str | None
+    speed: str | None
+    temperature: str | None
+    timestamp: str | None
+    battery: str | None
+    signal: str | None
+    gpsStrength: str | None
+    isActive: bool | None
+    isSubscribed: bool | None
     createdAt: str | None
+    updatedAt: str | None
     studentName: str | None
     studentId: str | None
 

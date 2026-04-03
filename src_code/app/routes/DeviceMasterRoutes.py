@@ -8,6 +8,7 @@ from app.controllers.DeviceMasterController import (
 router = APIRouter()
 
 
+@router.get("/list")
 async def list_devices_handler(request: Request):
     from app.controllers.DeviceMasterController import DeviceMasterController
 
@@ -32,3 +33,10 @@ async def resync_device_status(payload: ChangeDeviceStatusRequest):
     from app.controllers.DeviceMasterController import DeviceMasterController
 
     return await DeviceMasterController().resync_device_status(payload)
+
+
+@router.delete(path="/delete/{topic}")
+async def delete_device(topic: str):
+    from app.controllers.DeviceMasterController import DeviceMasterController
+
+    return await DeviceMasterController().delete_device(topic)

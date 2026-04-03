@@ -13,6 +13,7 @@ from app.constants.CommandDefinitions import COMMAND_DEFINITIONS
 
 IST = ZoneInfo("Asia/Kolkata")
 
+
 class CommandController:
 
     @staticmethod
@@ -53,7 +54,9 @@ class CommandController:
                 if "lat" not in point or "lng" not in point:
                     raise HTTPException(400, "each coordinate must contain lat and lng")
 
-                if not isinstance(point["lat"], (int, float)) or not isinstance(point["lng"], (int, float)):
+                if not isinstance(point["lat"], (int, float)) or not isinstance(
+                    point["lng"], (int, float)
+                ):
                     raise HTTPException(400, "lat and lng must be numeric")
 
         payload = {**definition["payload"], **command_req.params}
@@ -69,26 +72,41 @@ class CommandController:
         result = mqtt_connector.client.publish(topic, json.dumps(payload), qos=qos)
 
         if result.rc != 0:
-            logger.error("MQTT publish failed rc=%s imei=%s topic=%s", result.rc, command_req.imei, topic)
+            logger.error(
+                "MQTT publish failed rc=%s imei=%s topic=%s",
+                result.rc,
+                command_req.imei,
+                topic,
+            )
             raise HTTPException(500, f"MQTT publish failed rc={result.rc}")
 
-        created_at_ist = (datetime.now(timezone.utc).astimezone(IST).replace(tzinfo=None))
+        created_at_ist = datetime.now(timezone.utc).astimezone(IST).replace(tzinfo=None)
 
         db = get_db()
 
-        await db.save(DeviceCommand(
-            imei=command_req.imei,
-            command=command_req.command,
-            payload=payload,
-            qos=qos,
-            status="PUBLISHED",
-            created_at=created_at_ist,
-            updated_at=None
-        ))
+        await db.save(
+            DeviceCommand(
+                imei=command_req.imei,
+                command=command_req.command,
+                payload=payload,
+                qos=qos,
+                status="PUBLISHED",
+                created_at=created_at_ist,
+                updated_at=None,
+            )
+        )
 
         # 🔥 SAVE GEOFENCE DATA ON SUCCESSFUL API RESPONSE
         if command_req.command == "SET_GEOFENCE":
-            await db.save(GeofenceData(imei=command_req.imei, geofence_number=command_req.params["geofence_number"], geofence_id=command_req.params["geofence_id"], coordinates=command_req.params["coordinates"], created_at=created_at_ist))
+            await db.save(
+                GeofenceData(
+                    imei=command_req.imei,
+                    geofence_number=command_req.params["geofence_number"],
+                    geofence_id=command_req.params["geofence_id"],
+                    coordinates=command_req.params["coordinates"],
+                    created_at=created_at_ist,
+                )
+            )
 
         return {
             "status": "SENT",
@@ -96,5 +114,5 @@ class CommandController:
             "imei": command_req.imei,
             "command": command_req.command,
             "qos": qos,
-            "created_at": created_at_ist.isoformat()
+            "created_at": created_at_ist.isoformat(),
         }

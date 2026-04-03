@@ -13,14 +13,7 @@ import httpx
 
 
 class DeviceMasterRequest(BaseModel):
-    topic: str
-    imei: Optional[str] = None
-    interval: Optional[int] = None
-    Geoid: Optional[str] = None
-    created_at: Optional[datetime] = None
-    student_name: Optional[str] = None
-    student_id: Optional[str] = None
-    is_active: Optional[bool] = False
+    imei: str
 
 
 class ChangeDeviceStatusRequest(BaseModel):
@@ -35,6 +28,7 @@ def serialize_device(record):
     data = record.dict()
 
     created = data.get("created_at")
+    updated = data.get("updated_at")
 
     # Normalize datetime → string
     if isinstance(created, datetime):
@@ -44,16 +38,33 @@ def serialize_device(record):
     else:
         created_stripped = None
 
+    if isinstance(updated, datetime):
+        updated_stripped = updated.strftime("%Y-%m-%d %H:%M:%S")
+    elif isinstance(updated, str):
+        updated_stripped = updated.split(".")[0]
+    else:
+        updated_stripped = None
+
     return {
         "topic": data.get("topic"),
         "imei": data.get("imei"),
         "interval": data.get("interval"),
         "geoid": data.get("Geoid"),  # USE EXACT DB FIELD
+        "packet": data.get("packet"),
+        "latitude": data.get("latitude"),
+        "longitude": data.get("longitude"),
+        "speed": data.get("speed"),
+        "temperature": data.get("temperature"),
+        "timestamp": data.get("timestamp"),
+        "battery": data.get("Battery"),
+        "signal": data.get("Signal"),
+        "gps_strength": data.get("GPSStrength"),
         "student_name": data.get("student_name"),
         "student_id": data.get("student_id"),
         "is_active": data.get("is_active"),
         "is_subscribed": data.get("is_subscribed"),
         "createdAt": created_stripped,
+        "updatedAt": updated_stripped,
     }
 
 
@@ -114,9 +125,11 @@ class DeviceMasterController:
     async def add_device(self, payload: DeviceMasterRequest):
         try:
             db = get_db()
+            imei = payload.imei.strip()
+            topic = f"{imei}/pub"
 
             # Check if device already exists
-            record = await db.find_one(DeviceMaster, {"topic": payload.topic})
+            record = await db.find_one(DeviceMaster, {"topic": topic})
             if record:
                 return JSONResponse(
                     APIResponse.error(
@@ -127,17 +140,29 @@ class DeviceMasterController:
 
             # Create new device
             device = DeviceMaster(
-                topic=payload.topic,
-                imei=payload.imei,
-                interval=payload.interval,
-                Geoid=payload.Geoid,
-                student_name=payload.student_name,
-                student_id=payload.student_id,
-                is_active=payload.is_active,
-                created_at=datetime.utcnow(),  # 👈 good practice
+                topic=topic,
+                imei=imei,
+                is_active=True,
+                is_subscribed=False,
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
             )
 
             new_record = await db.save(device)
+            async with httpx.AsyncClient(timeout=10) as client:
+                res = await client.post(
+                    f"{settings.WORKER_APP_URL}/resync-topic",
+                    params={"topic": new_record.topic, "is_active": True},
+                )
+
+            if res.status_code != ErrorCodes.SUCCESS:
+                return JSONResponse(
+                    APIResponse.error(
+                        msg="Device added but subscription sync failed. Please retry resync.",
+                        code=ErrorCodes.SERVICE_UNAVAILABLE,
+                    ),
+                    status_code=ErrorCodes.SERVICE_UNAVAILABLE,
+                )
 
             return JSONResponse(
                 APIResponse.success(
@@ -169,7 +194,6 @@ class DeviceMasterController:
                     ),
                     status_code=ErrorCodes.BAD_REQUEST,
                 )
-            sync_dict = {"topic": payload.topic, "is_active": payload.is_active}
             async with httpx.AsyncClient(timeout=10) as client:
                 res = await client.post(
                     f"{settings.WORKER_APP_URL}/resync-topic",
@@ -195,11 +219,38 @@ class DeviceMasterController:
                 return JSONResponse(
                     APIResponse.error(
                         msg=("Device subscription failed. Please try again later"),
-                        data=serialize_device(updated_record),
                     ),
-                    status_code=ErrorCodes.SUCCESS,
+                    status_code=ErrorCodes.SERVICE_UNAVAILABLE,
                 )
 
+        except Exception as e:
+            return JSONResponse(
+                APIResponse.error(
+                    msg=f"Unexpected error: {str(e)}",
+                    code=ErrorCodes.INTERNAL_SERVER_ERROR,
+                ),
+                status_code=ErrorCodes.INTERNAL_SERVER_ERROR,
+            )
+
+    async def delete_device(self, topic: str):
+        try:
+            db = get_db()
+            record = await db.find_one(DeviceMaster, {"topic": topic})
+
+            if record is None:
+                return JSONResponse(
+                    APIResponse.error(
+                        msg="Device Does Not Exist", code=ErrorCodes.NOT_FOUND
+                    ),
+                    status_code=ErrorCodes.NOT_FOUND,
+                )
+
+            await db.delete(record)
+
+            return JSONResponse(
+                APIResponse.success(msg="Device deleted successfully"),
+                status_code=ErrorCodes.SUCCESS,
+            )
         except Exception as e:
             return JSONResponse(
                 APIResponse.error(
