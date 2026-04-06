@@ -35,9 +35,19 @@ class AirplaneModeRequest(BaseModel):
     topic: str
     AirplaneMode: str  # expect "enable" or "disable"
 
+
 class LedStatusRequest(BaseModel):
     topic: str
     LED: str  # expect "SwitchOnLed" or "SwitchoffLed"
+
+
+class DevicePhoneUpdateRequest(BaseModel):
+    topic: str
+    phone_num1: Optional[str] = Field(None, alias="phonenum1")
+    phone_num2: Optional[str] = Field(None, alias="phonenum2")
+    control_room_num: Optional[str] = Field(None, alias="controlroomnum")
+
+    model_config = {"populate_by_name": True}
 
 
 client = mqtt_connector.client
@@ -97,6 +107,19 @@ def send_led_command(imei: str, led_command: str):
         return False, f"MQTT publish failed rc={result.rc}"
 
     return True, "LED command published"
+
+
+def send_phone_update_command(imei: str, phones: dict):
+    if not client.is_connected():
+        return False, "MQTT client not connected"
+
+    command_topic = f"{imei}/sub"
+    payload = json.dumps(phones)
+    result = client.publish(command_topic, payload)
+    if result.rc != 0:
+        return False, f"MQTT publish failed rc={result.rc}"
+
+    return True, "Phone numbers command published"
 
 
 def serialize_device_setting(record: DeviceSetting):
@@ -169,7 +192,7 @@ class DeviceSettingsController:
                             code=ErrorCodes.INTERNAL_SERVER_ERROR,
                         )
                     )
-                timeout_seconds = 30
+                timeout_seconds = 15
                 poll_interval = 5
                 attempts = int(timeout_seconds / poll_interval)
 
@@ -387,7 +410,6 @@ class DeviceSettingsController:
                     status_code=ErrorCodes.INTERNAL_SERVER_ERROR,
                 )
 
-            # optimistic update
             device.led_status = payload.LED
             await db.save(device)
 
@@ -397,6 +419,99 @@ class DeviceSettingsController:
                     data={"topic": payload.topic, "LED": payload.LED},
                 ),
                 status_code=ErrorCodes.SUCCESS,
+            )
+
+        except Exception as e:
+            return JSONResponse(
+                APIResponse.error(
+                    msg=f"Unexpected error: {str(e)}",
+                    code=ErrorCodes.INTERNAL_SERVER_ERROR,
+                ),
+                status_code=ErrorCodes.INTERNAL_SERVER_ERROR,
+            )
+
+    async def update_phone_numbers(self, payload: DevicePhoneUpdateRequest):
+        try:
+            db = get_db()
+
+            device = await db.find_one(DeviceMaster, {"topic": payload.topic})
+            if not device:
+                return JSONResponse(
+                    APIResponse.error(
+                        msg="Device not found",
+                        code=ErrorCodes.NOT_FOUND,
+                    ),
+                    status_code=ErrorCodes.NOT_FOUND,
+                )
+
+            updates_raw = payload.model_dump(by_alias=True, exclude_unset=True)
+            updates_raw.pop("topic", None)
+
+            if not updates_raw:
+                return JSONResponse(
+                    APIResponse.error(
+                        msg="No phone numbers provided",
+                        code=ErrorCodes.BAD_REQUEST,
+                    ),
+                    status_code=ErrorCodes.BAD_REQUEST,
+                )
+
+            ok, publish_message = send_phone_update_command(device.imei, updates_raw)
+            if not ok:
+                return JSONResponse(
+                    APIResponse.error(
+                        msg=f"Phone numbers command failed: {publish_message}",
+                        code=ErrorCodes.INTERNAL_SERVER_ERROR,
+                    ),
+                    status_code=ErrorCodes.INTERNAL_SERVER_ERROR,
+                )
+
+            # Give device a moment, then request fresh settings
+            await asyncio.sleep(5)
+            request_device_settings_query(device.imei)
+
+            timeout_seconds = 15
+            poll_interval = 5
+            attempts = int(timeout_seconds / poll_interval)
+            last_settings_record = None
+
+            for _ in range(attempts):
+                settings_record = await db.find_one(
+                    DeviceSetting, DeviceSetting.device == device.id
+                )
+                if settings_record:
+                    last_settings_record = settings_record
+                    all_match = True
+                    for key, desired in updates_raw.items():
+                        current_val = getattr(settings_record, key, None)
+                        if str(desired) != str(current_val):
+                            all_match = False
+                            break
+                    if all_match:
+                        return JSONResponse(
+                            APIResponse.success(
+                                msg="Device phone numbers updated successfully",
+                                data=serialize_device_setting(settings_record),
+                            ),
+                            status_code=ErrorCodes.SUCCESS,
+                        )
+                await asyncio.sleep(poll_interval)
+
+            return JSONResponse(
+                APIResponse.success(
+                    msg=(
+                        "Device responded but values differ from requested"
+                        if last_settings_record
+                        else "Device phone update command sent. Awaiting device response."
+                    ),
+                    data=(
+                        serialize_device_setting(last_settings_record)
+                        if last_settings_record
+                        else {"topic": payload.topic, "status": "pending"}
+                    ),
+                    code=ErrorCodes.ACCEPTED,
+                ),
+                status_code=ErrorCodes.ACCEPTED,
             )
 
         except Exception as e:

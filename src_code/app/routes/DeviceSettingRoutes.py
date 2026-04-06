@@ -2,6 +2,7 @@ from fastapi import Request, APIRouter
 from app.controllers.DeviceSettingsController import (
     DeviceSettingsController,
     DeviceSettingUpdateRequest,
+    DevicePhoneUpdateRequest,
     AirplaneModeRequest,
     LedStatusRequest,
 )
@@ -28,3 +29,8 @@ async def set_airplane_mode(payload: AirplaneModeRequest):
 @router.post("/led-status")
 async def set_led_status(payload: LedStatusRequest):
     return await DeviceSettingsController().set_led_status(payload=payload)
+
+
+@router.post("/update-phones")
+async def update_phones(payload: DevicePhoneUpdateRequest):
+    return await DeviceSettingsController().update_phone_numbers(payload=payload)
